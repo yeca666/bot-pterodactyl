@@ -4,14 +4,15 @@ import requests
 from threading import Thread
 from flask import Flask
 
-# --- MINI SERVIDOR PARA RENDER ---
+# --- MINI SERVIDOR PARA RENDER (Mantiene el estado "Live") ---
 app = Flask('')
+
 @app.route('/')
 def home():
     return "Bot is alive!"
 
 def run_flask():
-    # Render usa la variable PORT, si no existe usa el 8080
+    # Render asigna el puerto automáticamente
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
 
@@ -25,34 +26,70 @@ bot = telebot.TeleBot(TOKEN)
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, "🎮 Conectando con el panel Xeon...")
-    headers = {"Authorization": f"Bearer {PTERO_KEY}", "Accept": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {PTERO_KEY}",
+        "Accept": "application/json"
+    }
     
     try:
         base_url = PTERO_URL.rstrip('/')
         url = f"{base_url}/api/client"
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             servers = response.json()['data']
             markup = telebot.types.InlineKeyboardMarkup()
             
+            if not servers:
+                bot.send_message(message.chat.id, "No se encontraron servidores en tu cuenta.")
+                return
+
             for s in servers:
                 name = s['attributes']['name']
                 uuid = s['attributes']['identifier']
-                # Limitamos el nombre a 20 caracteres para evitar errores de Telegram
-                clean_name = (name[:20] + '..') if len(name) > 20 else name
-                markup.add(telebot.types.InlineKeyboardButton(text=f"🕹️ {clean_name}", callback_query_data=f"pow_{uuid}"))
+                
+                # --- LIMPIEZA TOTAL PARA EVITAR ERROR 400 ---
+                # Quitamos símbolos raros y cortamos a 20 caracteres
+                clean_name = ''.join(e for e in name if e.isalnum() or e in [' ', '-', '_'])
+                display_name = (clean_name[:20] + '..') if len(clean_name) > 20 else clean_name
+                if not display_name.strip(): display_name = "Servidor" # Por si el nombre era puro emoji
+                
+                markup.add(telebot.types.InlineKeyboardButton(
+                    text=f"🕹️ {display_name}", 
+                    callback_query_data=f"pow_{uuid}"
+                ))
             
-            bot.send_message(message.chat.id, "Selecciona un servidor:", reply_markup=markup)
+            bot.send_message(message.chat.id, "Selecciona un servidor para encender:", reply_markup=markup)
         else:
             bot.send_message(message.chat.id, f"❌ Error Panel: {response.status_code}")
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Error: {str(e)}")
+        bot.send_message(message.chat.id, f"❌ Error de conexión: {str(e)}")
 
-# (El resto del código de power_handler se queda igual...)
+@bot.callback_query_handler(func=lambda call: call.data.startswith('pow_'))
+def handle_query(call):
+    uuid = call.data.split('_')[1]
+    base_url = PTERO_URL.rstrip('/')
+    url = f"{base_url}/api/client/servers/{uuid}/power"
+    headers = {
+        "Authorization": f"Bearer {PTERO_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    try:
+        # Enviamos la señal de START
+        res = requests.post(url, json={"signal": "start"}, headers=headers)
+        if res.status_code in [204, 200]:
+            bot.answer_callback_query(call.id, "🚀 ¡Orden enviada!")
+            bot.edit_message_text("✅ Orden de encendido enviada al servidor!", call.message.chat.id, call.message.message_id)
+        else:
+            bot.answer_callback_query(call.id, f"❌ Error: {res.status_code}")
+    except:
+        bot.answer_callback_query(call.id, "❌ Error de red")
 
 if __name__ == '__main__':
-    # Arrancamos el mini-servidor en un hilo aparte
+    # Hilo para Flask (Render Port)
     Thread(target=run_flask).start()
-    print("Bot en marcha...")
+    print("Bot en marcha y puerto 8080 abierto...")
+    # Polling infinito
     bot.infinity_polling()

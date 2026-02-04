@@ -4,7 +4,7 @@ import requests
 from threading import Thread
 from flask import Flask
 
-# Servidor para Render
+# Servidor para Render (Mantiene el estado Live)
 app = Flask('')
 @app.route('/')
 def home(): return "Bot is alive!"
@@ -13,20 +13,20 @@ def run_flask():
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
 
-# Configuración
+# Configuración desde Variables de Entorno
 TOKEN = os.getenv("TOKEN_TELEGRAM")
-PTERO_URL = os.getenv("PTERO_URL")
+PTERO_URL = os.getenv("PTERO_URL").rstrip('/')
 PTERO_KEY = os.getenv("PTERO_API_KEY")
 
 bot = telebot.TeleBot(TOKEN)
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "🎮 Conectando con el panel Xeon...")
+    bot.reply_to(message, "🎮 Conectando con el panel...")
     headers = {"Authorization": f"Bearer {PTERO_KEY}", "Accept": "application/json"}
     
     try:
-        url = f"{PTERO_URL.rstrip('/')}/api/client"
+        url = f"{PTERO_URL}/api/client"
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
@@ -34,36 +34,37 @@ def send_welcome(message):
             markup = telebot.types.InlineKeyboardMarkup()
             
             for s in servers:
-                # Extraemos el nombre y quitamos cualquier símbolo que no sea letra o número
-                raw_name = s['attributes']['name']
-                clean_name = ''.join(e for e in raw_name if e.isalnum())[:15]
+                name_raw = s['attributes']['name']
                 uuid = s['attributes']['identifier']
                 
-                # Creamos el botón con un texto muy simple
+                # LIMPIEZA EXTREMA: Solo letras y números, máximo 12 caracteres
+                # Esto evita que los paréntesis de tus servers rompan Telegram
+                clean_name = ''.join(char for char in name_raw if char.isalnum())[:12]
+                
                 markup.add(telebot.types.InlineKeyboardButton(
-                    text=f"ON: {clean_name}", 
+                    text=f"▶️ {clean_name}", 
                     callback_query_data=f"pow_{uuid}"
                 ))
             
-            bot.send_message(message.chat.id, "Haz clic para encender:", reply_markup=markup)
+            bot.send_message(message.chat.id, "Selecciona servidor:", reply_markup=markup)
         else:
             bot.send_message(message.chat.id, f"❌ Error Panel: {response.status_code}")
     except Exception as e:
-        bot.send_message(message.chat.id, "❌ Error de conexión con el Panel.")
+        bot.send_message(message.chat.id, "❌ Error de conexión.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('pow_'))
 def handle_query(call):
     uuid = call.data.split('_')[1]
-    url = f"{PTERO_URL.rstrip('/')}/api/client/servers/{uuid}/power"
+    url = f"{PTERO_URL}/api/client/servers/{uuid}/power"
     headers = {"Authorization": f"Bearer {PTERO_KEY}", "Content-Type": "application/json"}
     
     try:
         res = requests.post(url, json={"signal": "start"}, headers=headers)
         if res.status_code in [204, 200]:
             bot.answer_callback_query(call.id, "🚀 ¡En marcha!")
-            bot.edit_message_text("✅ Servidor encendido correctamente.", call.message.chat.id, call.message.message_id)
+            bot.edit_message_text("✅ Encendido enviado.", call.message.chat.id, call.message.message_id)
         else:
-            bot.answer_callback_query(call.id, "❌ Error al encender.")
+            bot.answer_callback_query(call.id, "❌ No se pudo encender.")
     except:
         bot.answer_callback_query(call.id, "❌ Error de red.")
 

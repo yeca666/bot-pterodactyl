@@ -32,7 +32,9 @@ def send_welcome(message):
             for s in servers:
                 name = s['attributes']['name']
                 uuid = s['attributes']['identifier']
-                markup.add(telebot.types.InlineKeyboardButton(f"🕹️ {name}", callback_query_data=f"pow_{uuid}"))
+                # Limpiamos el nombre para que no supere los 30 caracteres y no dé error
+                clean_name = (name[:30] + '..') if len(name) > 30 else name
+                markup.add(telebot.types.InlineKeyboardButton(text=f"🕹️ {clean_name}", callback_query_data=f"pow_{uuid}"))
             
             bot.send_message(message.chat.id, "Selecciona un servidor para encender:", reply_markup=markup)
         else:
